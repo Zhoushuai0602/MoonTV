@@ -1,18 +1,33 @@
 import { NextResponse } from 'next/server';
 
 export const runtime = 'edge';
+export const revalidate = 0;
 
-// OrionTV 兼容接口
+// 简单白名单，只允许豆瓣图片域名
+const ALLOW_HOSTS = new Set(['img3.doubanio.com','img9.doubanio.com','img1.doubanio.com']);
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const imageUrl = searchParams.get('url');
+  const rawUrl = searchParams.get('url');
 
-  if (!imageUrl) {
+  if (!rawUrl) {
     return NextResponse.json({ error: 'Missing image URL' }, { status: 400 });
   }
 
+  let imageUrl: URL;
   try {
-    const imageResponse = await fetch(imageUrl, {
+    imageUrl = new URL(rawUrl);
+  } catch {
+    return NextResponse.json({ error: 'Invalid url' }, { status: 400 });
+  }
+
+  if (!ALLOW_HOSTS.has(imageUrl.hostname)) {
+    return NextResponse.json({ error: 'Host not allowed' }, { status: 403 });
+  }
+
+  try {
+    const imageResponse = await fetch(rawUrl, {
+      redirect: 'follow',
       headers: {
         Referer: 'https://movie.douban.com/',
         'User-Agent':
@@ -22,40 +37,25 @@ export async function GET(request: Request) {
 
     if (!imageResponse.ok) {
       return NextResponse.json(
-        { error: imageResponse.statusText },
+        { error: `Source fetch failed: ${imageResponse.statusText}` },
         { status: imageResponse.status }
       );
     }
 
     const contentType = imageResponse.headers.get('content-type');
-
     if (!imageResponse.body) {
-      return NextResponse.json(
-        { error: 'Image response has no body' },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: 'Empty image stream' }, { status: 500 });
     }
 
-    // 创建响应头
     const headers = new Headers();
-    if (contentType) {
-      headers.set('Content-Type', contentType);
-    }
-
-    // 设置缓存头（可选）
-    headers.set('Cache-Control', 'public, max-age=15720000, s-maxage=15720000'); // 缓存半年
+    if (contentType) headers.set('Content-Type', contentType);
+    headers.set('Cache-Control', 'public, max-age=15720000, s-maxage=15720000');
     headers.set('CDN-Cache-Control', 'public, s-maxage=15720000');
     headers.set('Vercel-CDN-Cache-Control', 'public, s-maxage=15720000');
 
-    // 直接返回图片流
-    return new Response(imageResponse.body, {
-      status: 200,
-      headers,
-    });
-  } catch (error) {
-    return NextResponse.json(
-      { error: 'Error fetching image' },
-      { status: 500 }
-    );
+    return new Response(imageResponse.body, { status: 200, headers });
+  } catch (err) {
+    console.error('proxy err:', err);
+    return NextResponse.json({ error: 'Fetch source image failed' }, { status: 500 });
   }
 }
