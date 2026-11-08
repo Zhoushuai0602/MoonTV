@@ -1,61 +1,44 @@
-import { NextResponse } from 'next/server';
+.import { NextRequest, NextResponse } from 'next/server'
 
-export const runtime = 'edge';
-export const revalidate = 0;
+const TMDB_API_KEY = "7d9632d48ad1b14bf6bb3b79f3580c1c"
+const ALLOW_HOSTS = [
+  "image.tmdb.org"
+]
 
-// 简单白名单，只允许豆瓣图片域名
-const ALLOW_HOSTS = new Set(['img3.doubanio.com','img9.doubanio.com','img1.doubanio.com']);
-
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const rawUrl = searchParams.get('url');
-
-  if (!rawUrl) {
-    return NextResponse.json({ error: 'Missing image URL' }, { status: 400 });
-  }
-
-  let imageUrl: URL;
+export async function GET(req: NextRequest) {
   try {
-    imageUrl = new URL(rawUrl);
-  } catch {
-    return NextResponse.json({ error: 'Invalid url' }, { status: 400 });
-  }
+    const searchParams = req.nextUrl.searchParams
+    const posterPath = searchParams.get("path")
+    if (!posterPath) {
+      return NextResponse.json({ err: "缺少 path 参数" }, { status: 400 })
+    }
 
-  if (!ALLOW_HOSTS.has(imageUrl.hostname)) {
-    return NextResponse.json({ error: 'Host not allowed' }, { status: 403 });
-  }
+    const imgUrl = `https://image.tmdb.org/t/p/original${posterPath}`
+    const host = new URL(imgUrl).hostname
+    if (!ALLOW_HOSTS.includes(host)) {
+      return NextResponse.json({ err: "域名不允许" }, { status: 403 })
+    }
 
-  try {
-    const imageResponse = await fetch(rawUrl, {
-      redirect: 'follow',
+    const res = await fetch(imgUrl, {
       headers: {
-        Referer: 'https://movie.douban.com/',
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-      },
-    });
-
-    if (!imageResponse.ok) {
-      return NextResponse.json(
-        { error: `Source fetch failed: ${imageResponse.statusText}` },
-        { status: imageResponse.status }
-      );
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"
+      }
+    })
+    if (!res.ok) {
+      return NextResponse.json({ err: "图片获取失败" }, { status: res.status })
     }
 
-    const contentType = imageResponse.headers.get('content-type');
-    if (!imageResponse.body) {
-      return NextResponse.json({ error: 'Empty image stream' }, { status: 500 });
-    }
+    const buf = await res.arrayBuffer()
+    const contentType = res.headers.get("content-type") || "image/jpeg"
 
-    const headers = new Headers();
-    if (contentType) headers.set('Content-Type', contentType);
-    headers.set('Cache-Control', 'public, max-age=15720000, s-maxage=15720000');
-    headers.set('CDN-Cache-Control', 'public, s-maxage=15720000');
-    headers.set('Vercel-CDN-Cache-Control', 'public, s-maxage=15720000');
-
-    return new Response(imageResponse.body, { status: 200, headers });
-  } catch (err) {
-    console.error('proxy err:', err);
-    return NextResponse.json({ error: 'Fetch source image failed' }, { status: 500 });
+    return new NextResponse(buf, {
+      headers: {
+        "Content-Type": contentType,
+        "Cache-Control": "public, max-age=86400"
+      }
+    })
+  } catch (e) {
+    console.error(e)
+    return NextResponse.json({ err: "代理异常" }, { status: 500 })
   }
 }
